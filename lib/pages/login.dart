@@ -4,113 +4,227 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:rentalcar/menu/dashboard.dart';
+import 'package:rentalcar/pages/loginpage.dart'; // ← import halaman login manual
+import 'package:rentalcar/config/api_config.dart'; // ← Import file config
 
-class LoginPage extends StatelessWidget {
+class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
 
-  Future<void> _signInWithGoogle(BuildContext context) async {
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  bool _isLoading = false;
+
+  // ⚠️ GANTI dengan IP laptop kamu saat ini
+  // static const String _apiUrl =
+  //     'http://192.168.189.7:8000/api/auth/google/mobile';
+
+  // Web Client ID (bukan Android)
+  static const String _serverClientId =
+      '1055921517849-kd3ps2tleptf1tmpqqadvnb9f64m7tpr.apps.googleusercontent.com';
+
+  Future<void> _signInWithGoogle() async {
+    setState(() => _isLoading = true);
+
     try {
-      final GoogleSignIn googleSignIn = GoogleSignIn();
+      final GoogleSignIn googleSignIn = GoogleSignIn(
+        serverClientId: _serverClientId,
+        scopes: ['email', 'profile'],
+      );
 
-      // 1. Dapatkan akun Google dari HP
+      await googleSignIn.signOut();
+
       final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
-
-      // Jika user menekan tombol batal / back saat pop-up Google muncul
       if (googleUser == null) {
-        print('Login dibatalkan user');
+        debugPrint('Login dibatalkan oleh user');
+        setState(() => _isLoading = false);
         return;
       }
 
-      // 2. Dapatkan Access Token otentikasi dari Google
       final GoogleSignInAuthentication googleAuth =
           await googleUser.authentication;
+
+      final String? idToken = googleAuth.idToken;
       final String? accessToken = googleAuth.accessToken;
 
-      if (accessToken == null) {
-        throw Exception('Gagal mendapatkan access token dari Google');
+      debugPrint('--- DEBUG TOKEN ---');
+      debugPrint(
+        'idToken: ${idToken != null ? "ADA (${idToken.length} chars)" : "NULL ❌"}',
+      );
+      debugPrint('accessToken: ${accessToken != null ? "ADA" : "NULL"}');
+      debugPrint('-------------------');
+
+      if (idToken == null) {
+        throw Exception(
+          'id_token null. Pastikan serverClientId sudah benar (gunakan Web Client ID).',
+        );
       }
 
-      // 3. Kirim Token ke API Laravel
-      // PENTING: Atur IP sesuai perangkat Anda!
-      // Jika Emulator Android = http://10.0.2.2:8000
-      // Jika HP Fisik = http://192.168.x.x:8000 (IP WiFi Laptop Anda)
-      // Gunakan IPv4 dari adapter Wi-Fi Anda
-      final String apiUrl = 'http://192.168.189.7:8000/api/auth/google/mobile';
-      final response = await http.post(
-        Uri.parse(apiUrl),
-        headers: {'Accept': 'application/json'},
-        body: {'token': accessToken},
-      );
+      debugPrint('Mengirim ke Laravel: ${ApiConfig.googleLogin}');
+      
+      final response = await http
+          .post(
+            Uri.parse(ApiConfig.googleLogin),
+            headers: {
+              'Accept': 'application/json',
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: {'id_token': idToken},
+          )
+          .timeout(
+            const Duration(seconds: 15),
+            onTimeout: () {
+              throw Exception(
+                'Timeout! Server tidak merespons.\n'
+                'Cek:\n'
+                '1. IP ${ApiConfig.googleLogin} bisa diakses dari HP?\n'
+                '2. php artisan serve --host=0.0.0.0 sudah jalan?\n'
+                '3. HP dan laptop di WiFi yang sama?',
+              );
+            },
+          );
 
-      // 4. Handle Respons dari API Laravel
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+      debugPrint('Status code: ${response.statusCode}');
+      debugPrint('Response: ${response.body}');
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['status'] == 'success') {
         final String sanctumToken = data['access_token'];
+        final userData = data['user'];
 
-        // 5. Simpan Token Sanctum ke penyimpanan HP
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('auth_token', sanctumToken);
 
-        print('Login API Sukses! Token: $sanctumToken');
+        if (userData != null) {
+          await prefs.setString('user_name', userData['name'] ?? '');
+          await prefs.setString('user_email', userData['email'] ?? '');
+          if (userData['avatar'] != null) {
+            await prefs.setString('avatar_url', userData['avatar']);
+          }
+        }
 
-        // 6. Pindah ke Dashboard
-        if (context.mounted) {
+        debugPrint('✅ Login sukses! User: ${userData?['email']}');
+
+        if (mounted) {
           Navigator.pushReplacement(
             context,
-            MaterialPageRoute(builder: (context) => const Dashboard()),
+            MaterialPageRoute(builder: (_) => const Dashboard()),
           );
         }
       } else {
-        print('Gagal dari Server: ${response.body}');
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Gagal verifikasi di server. Coba lagi.'),
-            ),
-          );
-        }
+        final String errorMsg =
+            data['message'] ?? 'Gagal login (status: ${response.statusCode})';
+        throw Exception(errorMsg);
       }
     } catch (e) {
-      print('Error login Google: $e');
-      if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Terjadi kesalahan: $e')));
+      debugPrint('❌ Error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceFirst('Exception: ', '')),
+            backgroundColor: Colors.red.shade700,
+            duration: const Duration(seconds: 6),
+            action: SnackBarAction(
+              label: 'OK',
+              textColor: Colors.white,
+              onPressed: () {},
+            ),
+          ),
+        );
       }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.blueGrey.shade50,
       appBar: AppBar(title: const Text('Login'), centerTitle: true),
       body: Center(
         child: Padding(
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.symmetric(horizontal: 32),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.directions_car, size: 80, color: Colors.blue),
-              const SizedBox(height: 20),
+              const FlutterLogo(size: 80),
+              const SizedBox(height: 40),
               const Text(
-                'Login to Rental Car',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                'Rental Car',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Masuk dengan akun Google kamu',
+                style: TextStyle(color: Colors.grey.shade600),
               ),
               const SizedBox(height: 40),
+
+              // ── Tombol Sign in with Google ──
               SizedBox(
                 width: double.infinity,
                 height: 50,
-                child: OutlinedButton.icon(
-                  onPressed: () => _signInWithGoogle(context),
-                  icon: const Icon(Icons.login),
-                  label: const Text(
-                    'Sign in with Google',
-                    style: TextStyle(fontSize: 16),
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : OutlinedButton.icon(
+                        onPressed: _signInWithGoogle,
+                        icon: const Icon(Icons.login),
+                        label: const Text('Sign in with Google'),
+                        style: OutlinedButton.styleFrom(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                      ),
+              ),
+
+              const SizedBox(height: 12),
+
+              // ── Divider ──
+              Row(
+                children: [
+                  Expanded(child: Divider(color: Colors.grey.shade300)),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      'atau',
+                      style: TextStyle(
+                        color: Colors.grey.shade500,
+                        fontSize: 13,
+                      ),
+                    ),
                   ),
-                  style: OutlinedButton.styleFrom(
+                  Expanded(child: Divider(color: Colors.grey.shade300)),
+                ],
+              ),
+
+              const SizedBox(height: 12),
+
+              // ── Tombol Login Manual (khusus pengguna sistem) ──
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton.icon(
+                  onPressed: _isLoading
+                      ? null
+                      : () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const ManualLoginPage(),
+                            ),
+                          );
+                        },
+                  icon: const Icon(Icons.admin_panel_settings_outlined),
+                  label: const Text('Login Sistem'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.grey.shade800,
+                    foregroundColor: Colors.white,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(8),
                     ),
                   ),
                 ),

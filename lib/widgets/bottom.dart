@@ -7,8 +7,9 @@ import 'package:rentalcar/pages/login.dart';
 import 'package:rentalcar/menu/profil.dart';
 import 'package:rentalcar/menu/chat.dart';
 import 'package:rentalcar/menu/dashboard.dart';
+import 'package:rentalcar/config/api_config.dart';
 
-class Bottom extends StatelessWidget {
+class Bottom extends StatefulWidget {
   final int currentIndex;
   final Function(int) onTap;
 
@@ -17,6 +18,30 @@ class Bottom extends StatelessWidget {
     required this.currentIndex,
     required this.onTap,
   });
+
+  @override
+  State<Bottom> createState() => _BottomState();
+}
+
+class _BottomState extends State<Bottom> {
+  String? _avatarUrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadAvatar();
+  }
+
+  /// ================== LOAD AVATAR DARI SHARED PREFERENCES ==================
+  Future<void> _loadAvatar() async {
+    final prefs = await SharedPreferences.getInstance();
+    final String? url = prefs.getString('avatar_url');
+    if (mounted) {
+      setState(() {
+        _avatarUrl = url;
+      });
+    }
+  }
 
   /// ================== DIALOG LOGOUT ==================
   Future<void> _confirmLogout(BuildContext context) async {
@@ -44,13 +69,11 @@ class Bottom extends StatelessWidget {
         final prefs = await SharedPreferences.getInstance();
         final String? token = prefs.getString('auth_token');
 
-        // 2. Hapus token dari server Laravel (Database)
+        // 2. Hapus token dari server Laravel
         if (token != null) {
-          // Sesuaikan IP address jika jaringan Wi-Fi Anda berubah
-          final String apiUrl = 'http://192.168.189.7:8000/api/logout';
-
+          // final String apiUrl = 'http://192.168.189.7:8000/api/logout';
           await http.post(
-            Uri.parse(apiUrl),
+            Uri.parse(ApiConfig.logout),
             headers: {
               'Accept': 'application/json',
               'Authorization': 'Bearer $token',
@@ -58,18 +81,19 @@ class Bottom extends StatelessWidget {
           );
         }
 
-        // 3. Hapus token dari penyimpanan HP secara lokal
+        // 3. Hapus semua data dari penyimpanan HP
         await prefs.remove('auth_token');
+        await prefs.remove('avatar_url'); // ✅ hapus juga avatar
 
         // 4. Logout dari Google SDK
         final GoogleSignIn googleSignIn = GoogleSignIn();
         await googleSignIn.signOut();
-
       } catch (e) {
         print('Error saat logout: $e');
-        // Fallback: Jika internet mati / server error, tetap paksa hapus token lokal
+        // Fallback: tetap paksa hapus token lokal
         final prefs = await SharedPreferences.getInstance();
         await prefs.remove('auth_token');
+        await prefs.remove('avatar_url');
       }
 
       // 5. Tendang user kembali ke halaman Login
@@ -111,11 +135,28 @@ class Bottom extends StatelessWidget {
     );
   }
 
+  /// ================== WIDGET AVATAR ==================
+  Widget _buildAvatar() {
+    final bool isActive = widget.currentIndex == 3;
+
+    return CircleAvatar(
+      radius: 14,
+      backgroundColor: isActive ? Colors.blue : Colors.grey.shade300,
+      child: CircleAvatar(
+        radius: 12,
+        // ✅ Prioritas: URL dari API → fallback ke asset lokal
+        backgroundImage: (_avatarUrl != null && _avatarUrl!.isNotEmpty)
+            ? NetworkImage(_avatarUrl!) as ImageProvider
+            : const AssetImage('assets/anya.jpg'),
+      ),
+    );
+  }
+
   /// ================== BUILD ==================
   @override
   Widget build(BuildContext context) {
     return BottomNavigationBar(
-      currentIndex: currentIndex,
+      currentIndex: widget.currentIndex,
       type: BottomNavigationBarType.fixed,
       selectedItemColor: Colors.blue,
       onTap: (index) {
@@ -123,29 +164,23 @@ class Bottom extends StatelessWidget {
           // HOME → DASHBOARD
           Navigator.pushAndRemoveUntil(
             context,
-            MaterialPageRoute(
-              builder: (_) => const Dashboard(),
-            ),
+            MaterialPageRoute(builder: (_) => const Dashboard()),
             (route) => false,
           );
         } else if (index == 2) {
           // CHAT
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (_) => const ChatPage(),
-            ),
+            MaterialPageRoute(builder: (_) => const ChatPage()),
           );
         } else if (index == 3) {
-          // PROFILE
+          // PROFILE → reload avatar setelah kembali dari halaman profil
           Navigator.push(
             context,
-            MaterialPageRoute(
-              builder: (_) => const ProfilPage(),
-            ),
-          );
+            MaterialPageRoute(builder: (_) => const ProfilPage()),
+          ).then((_) => _loadAvatar()); // ✅ refresh avatar setelah balik dari profil
         } else {
-          onTap(index);
+          widget.onTap(index);
         }
       },
       items: [
@@ -164,15 +199,7 @@ class Bottom extends StatelessWidget {
         BottomNavigationBarItem(
           icon: GestureDetector(
             onLongPress: () => _showProfileMenu(context),
-            child: CircleAvatar(
-              radius: 14,
-              backgroundColor:
-                  currentIndex == 3 ? Colors.blue : Colors.grey.shade300,
-              child: const CircleAvatar(
-                radius: 12,
-                backgroundImage: AssetImage('assets/anya.jpg'),
-              ),
-            ),
+            child: _buildAvatar(), // ✅ pakai widget avatar dinamis
           ),
           label: 'Profile',
         ),
