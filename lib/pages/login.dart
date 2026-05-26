@@ -4,8 +4,7 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:rentalcar/menu/dashboard.dart';
-import 'package:rentalcar/pages/loginpage.dart'; // ← import halaman login manual
-import 'package:rentalcar/config/api_config.dart'; // ← Import file config
+import 'package:rentalcar/config/api_config.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -16,10 +15,6 @@ class LoginPage extends StatefulWidget {
 
 class _LoginPageState extends State<LoginPage> {
   bool _isLoading = false;
-
-  // ⚠️ GANTI dengan IP laptop kamu saat ini
-  // static const String _apiUrl =
-  //     'http://192.168.189.7:8000/api/auth/google/mobile';
 
   // Web Client ID (bukan Android)
   static const String _serverClientId =
@@ -34,6 +29,7 @@ class _LoginPageState extends State<LoginPage> {
         scopes: ['email', 'profile'],
       );
 
+      // Pastikan user bisa memilih akun Google yang berbeda jika mau
       await googleSignIn.signOut();
 
       final GoogleSignInAccount? googleUser = await googleSignIn.signIn();
@@ -47,13 +43,9 @@ class _LoginPageState extends State<LoginPage> {
           await googleUser.authentication;
 
       final String? idToken = googleAuth.idToken;
-      final String? accessToken = googleAuth.accessToken;
 
       debugPrint('--- DEBUG TOKEN ---');
-      debugPrint(
-        'idToken: ${idToken != null ? "ADA (${idToken.length} chars)" : "NULL ❌"}',
-      );
-      debugPrint('accessToken: ${accessToken != null ? "ADA" : "NULL"}');
+      debugPrint('idToken: ${idToken != null ? "ADA (${idToken.length} chars)" : "NULL ❌"}');
       debugPrint('-------------------');
 
       if (idToken == null) {
@@ -64,6 +56,7 @@ class _LoginPageState extends State<LoginPage> {
 
       debugPrint('Mengirim ke Laravel: ${ApiConfig.googleLogin}');
       
+      // Hit API Backend Laravel
       final response = await http
           .post(
             Uri.parse(ApiConfig.googleLogin),
@@ -78,23 +71,20 @@ class _LoginPageState extends State<LoginPage> {
             onTimeout: () {
               throw Exception(
                 'Timeout! Server tidak merespons.\n'
-                'Cek:\n'
-                '1. IP ${ApiConfig.googleLogin} bisa diakses dari HP?\n'
-                '2. php artisan serve --host=0.0.0.0 sudah jalan?\n'
-                '3. HP dan laptop di WiFi yang sama?',
+                'Cek koneksi WiFi dan pastikan server Laravel sudah berjalan.',
               );
             },
           );
 
       debugPrint('Status code: ${response.statusCode}');
-      debugPrint('Response: ${response.body}');
-
+      
       final data = jsonDecode(response.body);
 
       if (response.statusCode == 200 && data['status'] == 'success') {
         final String sanctumToken = data['access_token'];
         final userData = data['user'];
 
+        // Simpan token dan data user ke SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('auth_token', sanctumToken);
 
@@ -108,6 +98,7 @@ class _LoginPageState extends State<LoginPage> {
 
         debugPrint('✅ Login sukses! User: ${userData?['email']}');
 
+        // Navigasi ke Dashboard
         if (mounted) {
           Navigator.pushReplacement(
             context,
@@ -179,55 +170,6 @@ class _LoginPageState extends State<LoginPage> {
                           ),
                         ),
                       ),
-              ),
-
-              const SizedBox(height: 12),
-
-              // ── Divider ──
-              Row(
-                children: [
-                  Expanded(child: Divider(color: Colors.grey.shade300)),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                    child: Text(
-                      'atau',
-                      style: TextStyle(
-                        color: Colors.grey.shade500,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                  Expanded(child: Divider(color: Colors.grey.shade300)),
-                ],
-              ),
-
-              const SizedBox(height: 12),
-
-              // ── Tombol Login Manual (khusus pengguna sistem) ──
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton.icon(
-                  onPressed: _isLoading
-                      ? null
-                      : () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const ManualLoginPage(),
-                            ),
-                          );
-                        },
-                  icon: const Icon(Icons.admin_panel_settings_outlined),
-                  label: const Text('Login Sistem'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.grey.shade800,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                ),
               ),
             ],
           ),
